@@ -34,7 +34,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
         shell: bash
         run: | 
-          if [[ (contains('["dapanasik"]', github.actor) && ${{ env.ENVIRONMENT }} == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && ${{ env.ENVIRONMENT }} == 'qa') ]]; then
+          if [[ ${{ env.ENVIRONMENT }} == "dev" || ${{ env.ENVIRONMENT }} == "qa" ]]; then
             echo "Valid combination of ecosystem and environment"
           else
             echo "Access denied" >&2
