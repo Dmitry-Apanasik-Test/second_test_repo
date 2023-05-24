@@ -29,10 +29,14 @@ jobs:
     
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      - if: ${{ (contains('["dapanasik"]', github.actor) && inputs.environment == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && inputs.environment == 'qa')}}
+      - name: check access
         run: | 
-          echo Access denied
-          exit 1
+          if [[ (contains('["dapanasik"]', github.actor) && ${{ inputs.environment }} == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && ${{ inputs.environment }} == 'qa') ]]; then
+            echo "Valid combination of ecosystem and environment"
+          else
+            echo "Access denied" >&2
+            exit 1
+          fi
     
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
