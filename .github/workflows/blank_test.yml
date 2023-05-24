@@ -30,8 +30,11 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       - name: check access
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        shell: bash
         run: | 
-          if [[ (contains('["dapanasik"]', github.actor) && ${{ inputs.environment }} == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && ${{ inputs.environment }} == 'qa') ]]; then
+          if [[ (contains('["dapanasik"]', github.actor) && ${{ env.ENVIRONMENT }} == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && ${{ env.ENVIRONMENT }} == 'qa') ]]; then
             echo "Valid combination of ecosystem and environment"
           else
             echo "Access denied" >&2
