@@ -12,12 +12,14 @@
 # Template and assets
 #*.html *.css *.scss *.img    @peopledoc/tribe-ui
 
+
+* @AlexeyZverugo
+
+
 # Some module is quite complex, and shouldn't be touched without an expert
 # chiming in
-.github/workflows/*  @AlexeyZverugo
+.github/workflows/*  @dapanasik
 #.github/* @AlexeyZverugo
-
-* @dapanasik
 
 # Schema and SQL migrations
 #*.sql *-ddl.pg               @peopledoc/dba
