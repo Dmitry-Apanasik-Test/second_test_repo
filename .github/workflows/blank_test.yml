@@ -37,8 +37,8 @@ jobs:
       - name: Run a one-line script
         run: |
           echo ${{ github.actor }}
-          echo contains('["dapanasik"]', github.actor)
-          echo ${{ github.actor }} == "dapanasik"
+          if ${{ (contains('["dapanasik"]', github.actor) && inputs.environment == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && inputs.environment == 'qa')}}
+          then
           exit 1
 
       # Runs a set of commands using the runners shell
