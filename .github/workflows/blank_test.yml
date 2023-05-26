@@ -37,7 +37,7 @@ jobs:
       - name: Run a one-line script
         run: |
           echo ${{ github.actor }}
-          if [[ (contains('["dapanasik"]', github.actor) && inputs.environment == 'dev') || (contains('["AlexeyZverugo"]', github.actor) && inputs.environment == 'qa')]];then
+          if [[ contains('["dapanasik"]',  ${{ github.actor }})]];then
             echo Access denied
             exit 1
           fi
