@@ -14,7 +14,8 @@
 
 # Some module is quite complex, and shouldn't be touched without an expert
 # chiming in
-.github/workflows/* .github/* @AlexeyZverugo
+.github/workflows/*  @AlexeyZverugo
+.github/* @AlexeyZverugo
 
 # Schema and SQL migrations
 #*.sql *-ddl.pg               @peopledoc/dba
