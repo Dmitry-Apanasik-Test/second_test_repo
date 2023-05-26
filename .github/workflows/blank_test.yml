@@ -34,7 +34,7 @@ jobs:
 
       # Runs a single command using the runners shell
       - name: Run a one-line script
-        if: ${{ (!contains('["dapanasik"]', github.actor) && inputs.environment == 'dev') || (!contains('["AlexeyZverugo"]', github.actor) && inputs.environment == 'qa')}}
+        if: ${{ (!contains('["AlexeyZverugo"]', github.actor) && contains('["dev, "prod"]',inputs.environment)) || (!contains('["dapanasik"]', github.actor) && inputs.environment == 'qa')}}
         run: |
           echo ${{inputs.environment}}
           echo Access denied
