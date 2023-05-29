@@ -51,7 +51,7 @@ jobs:
     steps:
       - name: Check permissions
         if: ${{ (inputs.ecosystem == 'prod' && contains('["preview", "prod"]',inputs.environment) && !contains('["paul-vasiliev", "terretta"]', github.actor))
-          || (inputs.ecosystem == 'dev' && contains('["dev", "qa", "prod"]',inputs.environment) && !contains('["paul-vasiliev", "terretta", "AlexeyZverugo", "mihailsavchuk", "dapanasik", "akupreevs"]', github.actor)) )}}
+          || (inputs.ecosystem == 'dev' && contains('["dev", "qa", "prod"]',inputs.environment) && !contains('["paul-vasiliev", "terretta", "AlexeyZverugo", "mihailsavchuk", "dapanasik", "akupreevs"]', github.actor))}}
         run: |
           echo Access denied
           exit 1
