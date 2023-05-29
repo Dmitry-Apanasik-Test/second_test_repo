@@ -41,7 +41,7 @@ env:
 
 jobs:
   validate-inputs:
-    runs-on: [self-hosted, ARM64]
+    runs-on: ubuntu-latest
     container:
       image: amazon/aws-cli:latest
     outputs:
