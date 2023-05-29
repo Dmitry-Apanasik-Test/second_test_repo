@@ -1,0 +1,57 @@
+name: Deploy Risk Workflows
+
+on:
+  workflow_dispatch:
+    inputs:
+      ecosystem:
+        description: Ecosystem for workflow deployment
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      environment:
+        description: Environment for workflow deployment
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - preview
+          - prod
+      region:
+        description: The region in which the workflow will be deployed
+        required: true
+        type: choice
+        options:
+          - us-east-2
+          - us-east-1
+        default: us-east-2
+      workflow:
+        description: The name of the workflow to deploy
+        required: true
+        type: string
+      commit_hash:
+        description: Hash of the commit the artifacts from which will be deployed
+        required: true
+        type: string
+
+env:
+  ROLE_SESSION_NAME: CDPipeline-Session
+
+jobs:
+  validate-inputs:
+    runs-on: [self-hosted, ARM64]
+    container:
+      image: amazon/aws-cli:latest
+    outputs:
+      ARTIFACT_REPOSITORY_ACCOUNT_ID: ${{ steps.artifact_repository_account_id.outputs.artifact_repository_account_id }}
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - name: Check permissions
+        if: ${{ (inputs.ecosystem == "prod" && contains('["preview", "prod"]',inputs.environment) && !contains('["paul-vasiliev", "terretta"]', github.actor))
+          || (inputs.ecosystem == "dev" && contains('["dev", "qa", "prod"]',inputs.environment) && !contains('["paul-vasiliev", "terretta", "AlexeyZverugo", "mihailsavchuk", "dapanasik", "akupreevs"]', github.actor)) )}}
+        run: |
+          echo Access denied
+          exit 1
