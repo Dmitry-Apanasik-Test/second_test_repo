@@ -12,7 +12,7 @@
 # Template and assets
 #*.html *.css *.scss *.img    @peopledoc/tribe-ui
 
-* @AlexeyZverugo
+* @AlexeyZverugo @dapanasik
 # Some module is quite complex, and shouldn't be touched without an expert
 # chiming in
 .github/workflows/*  @dapanasik
