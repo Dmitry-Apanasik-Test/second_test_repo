@@ -1,1 +1,283 @@
+name: Loop | Strategy Catalog - Deploy
 
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment for the service deployment
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+      region:
+        description: The region in which the service will be deployed
+        required: true
+        type: choice
+        options:
+          - us-east-2
+          - us-east-1
+        default: us-east-2
+      commit_hash:
+        description: Hash of the commit the artifacts from which will be deployed
+        required: true
+        type: string
+
+env:
+  ROLE_SESSION_NAME: CDPipeline-Session
+  APP_NAME: strategy-catalog
+  ECOSYSTEM: dev
+
+jobs:
+  validate_inputs:
+    runs-on: [self-hosted, ARM64]
+    container:
+      image: python:3.11
+    outputs:
+      ARTIFACT_REPOSITORY_ACCOUNT_ID: ${{ steps.artifact_repository_account_id.outputs.artifact_repository_account_id }}
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - name: Install Additional Tools
+        shell: bash
+        run: |
+          apt update && apt install jq -y
+          pip install awscli
+
+      - name: Get Artifact Repository Account ID
+        id: artifact_repository_account_id
+        env:
+          ARTIFACT_REPOSITORY_ACCOUNT_ID_SSM_NAME: /metadata/account-ids/shared/shared/artifact_repository
+        shell: bash
+        run: |
+          ARTIFACT_REPOSITORY_ACCOUNT_ID=$(aws ssm get-parameter \
+            --name "${{ env.ARTIFACT_REPOSITORY_ACCOUNT_ID_SSM_NAME }}" \
+            --query "Parameter.Value" \
+            --region ${{ env.AWS_REGION }} \
+            --output text)
+
+          echo "ARTIFACT_REPOSITORY_ACCOUNT_ID=${ARTIFACT_REPOSITORY_ACCOUNT_ID}" >> "$GITHUB_ENV"
+
+          echo "artifact_repository_account_id=$ARTIFACT_REPOSITORY_ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: validate_inputs
+    runs-on: [self-hosted, ARM64]
+    container:
+      image: docker:dind
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_REGION: ${{ inputs.region }}
+      ARTIFACT_REPOSITORY_ACCOUNT_ID: ${{ needs.validate_inputs.outputs.ARTIFACT_REPOSITORY_ACCOUNT_ID }}
+      PROFILE: github-action
+      COMMIT_HASH: ${{ inputs.commit_hash }}
+    steps:
+      - name: Install AWS CLI
+        run: |
+          apk update
+          apk add --no-cache python3 py3-pip
+          pip install --upgrade pip
+          pip install awscli
+
+      - name: Install Additional Tools
+        run: |
+          apk add jq curl
+
+      - name: Get Strategy Catalog Account ID
+        run: |
+          STRATEGY_CATALOG_ACCOUNT_ID_SSM_NAME="/metadata/account-ids/${{ env.ECOSYSTEM}}/${{ env.ENVIRONMENT }}/strategy_catalog"
+
+          STRATEGY_CATALOG_ACCOUNT_ID=$(aws ssm get-parameter \
+            --name "$STRATEGY_CATALOG_ACCOUNT_ID_SSM_NAME" \
+            --query "Parameter.Value" \
+            --region ${{ env.AWS_REGION }} \
+            --output text)
+          echo "STRATEGY_CATALOG_ACCOUNT_ID=${STRATEGY_CATALOG_ACCOUNT_ID}" >> "$GITHUB_ENV"
+
+      - name: Assume Deployer Role
+        env:
+          DEPLOYER_ROLE_ARN: arn:aws:iam::${{ env.STRATEGY_CATALOG_ACCOUNT_ID }}:role/AwsInfrastructureDeployerRole
+        run: |
+          ASSUME_ROLE_OUTPUT=$(aws sts assume-role --role-arn ${{ env.DEPLOYER_ROLE_ARN }} \
+            --role-session-name ${{ env.ROLE_SESSION_NAME }})
+
+          aws configure set --profile ${{ env.PROFILE }} aws_access_key_id $(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.AccessKeyId')
+          aws configure set --profile ${{ env.PROFILE }} aws_secret_access_key $(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.SecretAccessKey')
+          aws configure set --profile ${{ env.PROFILE }} aws_session_token $(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.SessionToken')
+          echo "AWS_DEFAULT_PROFILE=${{ env.PROFILE }}" >> "$GITHUB_ENV"
+
+      - name: Check Task Definition
+        id: check-running-task-def
+        run: |
+          task_def=$(aws ecs list-task-definitions --region ${{ env.AWS_REGION }} | grep -o "${{ env.APP_NAME }}:" | wc -l)
+
+          if [ $task_def == "0" ]
+          then
+            echo "${{ env.APP_NAME}}-running=false"
+            echo "${{ env.APP_NAME}}-running=false" >> "$GITHUB_ENV"
+          else
+            echo "${{ env.APP_NAME}}-running=true"
+            echo "${{ env.APP_NAME}}-running=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create Task Definition
+        if: env.strategy-catalog-running == 'false'
+        env:
+          IMAGE: ${{ env.ARTIFACT_REPOSITORY_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.APP_NAME }}-app:${{ env.COMMIT_HASH }}
+        run: |
+          get_ssm_parameter() {
+            local app_name="$1"
+            local eco="$2"
+            local env="$3"
+            local region="$4"
+            local key="$5"
+
+            local output=$(aws ssm get-parameter \
+                    --name " /${app_name}/ecs/${eco}/${env}/${key}" \
+                    --query "Parameter.Value" \
+                    --region ${region} \
+                    --output text)
+
+            echo $output
+          }
+
+          get_ssm_parameter_with_decryption() {
+            local app_name="$1"
+            local eco="$2"
+            local env="$3"
+            local region="$4"
+            local key="$5"
+
+            local output=$(aws ssm get-parameter \
+                    --name " /${app_name}/ecs/${eco}/${env}/${key}" \
+                    --query "Parameter.Value" \
+                    --region ${region} \
+                    --with-decryption \
+                    --output text)
+
+            echo $output
+          }
+
+          task_definition_template=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "task-definition")
+
+          echo $task_definition_template
+
+          task_definition=$(echo $task_definition_template | jq '(.containerDefinitions[0].image) |= "${{ env.IMAGE }}"')
+
+          echo $task_definition | jq > fargate-task.json
+
+          aws ecs register-task-definition --cli-input-json file://./fargate-task.json --region ${{ env.AWS_REGION}}
+
+      - name: Check if Service exist
+        id: check-service-exist
+        env:
+          cluster_name: ${{ env.APP_NAME }}-ecs-cluster
+          service_name: ${{ env.APP_NAME }}-ecs-service
+        run: |
+          service_exist=$(aws ecs list-services --cluster ${{ env.cluster_name }} \
+            --region ${{ env.AWS_REGION}} | grep -o 'service/${{ env.cluster_name }}/${{ env.service_name }}' | wc -l)
+          if [ $service_exist == 0 ]
+          then
+            echo "${{ env.APP_NAME}}-service-exist=false"
+            echo "${{ env.APP_NAME}}-service-exist=false" >> "$GITHUB_ENV"
+          else
+            echo "${{ env.APP_NAME}}-service-exist=true"
+            echo "${{ env.APP_NAME}}-service-exist=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create Service
+        if: env.strategy-catalog-service-exist == 'false'
+        env:
+          compute_subnet_ids: /network/${{ env.AWS_REGION }}/compute-subnet-ids
+          cluster_name: ${{ env.APP_NAME }}-ecs-cluster
+          service_name: ${{ env.APP_NAME }}-ecs-service
+        run: |
+          get_ssm_parameter() {
+            local app_name="$1"
+            local eco="$2"
+            local env="$3"
+            local region="$4"
+            local key="$5"
+
+            local output=$(aws ssm get-parameter \
+                    --name " /${app_name}/ecs/${eco}/${env}/${key}" \
+                    --query "Parameter.Value" \
+                    --region ${region} \
+                    --output text)
+
+            echo $output
+          }
+
+          target_group_arn=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "alb-tg-arn")
+          container_port=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "container-port")
+          sg_id=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "sg-id")
+          desired_count=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "desired-count")
+
+          compute_subnet_ids=$(aws ssm get-parameter \
+                                --name "${{ env.compute_subnet_ids }}" \
+                                --query "Parameter.Value" \
+                                --region ${{ env.AWS_REGION }} \
+                                --output text)
+
+          aws ecs create-service --cluster ${{ env.cluster_name }} --service-name ${{ env.service_name }} \
+            --task-definition ${{ env.APP_NAME}} --desired-count $desired_count --launch-type "FARGATE" \
+            --network-configuration "awsvpcConfiguration={subnets=[$compute_subnet_ids],securityGroups=[$sg_id]}" \
+            --load-balancers targetGroupArn=$target_group_arn,containerName=${{ env.APP_NAME }},containerPort=$container_port \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy
+        if: env.strategy-catalog-service-exist == 'true'
+        env:
+          compute_subnet_ids: /network/${{ env.AWS_REGION }}/compute-subnet-ids
+          cluster_name: ${{ env.APP_NAME }}-ecs-cluster
+          service_name: ${{ env.APP_NAME }}-ecs-service
+          IMAGE: ${{ env.ARTIFACT_REPOSITORY_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION}}.amazonaws.com/${{ env.APP_NAME }}-app:${{ env.COMMIT_HASH }}
+        run: |
+
+          get_ssm_parameter() {
+            local app_name="$1"
+            local eco="$2"
+            local env="$3"
+            local region="$4"
+            local key="$5"
+
+            local output=$(aws ssm get-parameter \
+                    --name " /${app_name}/ecs/${eco}/${env}/${key}" \
+                    --query "Parameter.Value" \
+                    --region ${region} \
+                    --output text)
+
+            echo $output
+          }
+
+          echo "Updating the task definition..."
+          task_definition_template=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "task-definition")
+
+          echo $task_definition_template
+
+          task_definition=$(echo $task_definition_template | jq '(.containerDefinitions[0].image) |= "${{ env.IMAGE }}"')
+
+          echo $task_definition | jq > updated-fargate-task.json
+
+          aws ecs register-task-definition --cli-input-json file://./updated-fargate-task.json --region ${{ env.AWS_REGION}}
+
+
+          echo "Updating the service..."
+          target_group_arn=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "alb-tg-arn")
+          container_port=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "container-port")
+          sg_id=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "sg-id")
+          desired_count=$(get_ssm_parameter "${{ env.APP_NAME }}" "${{ env.ECOSYSTEM }}" "${{ env.ENVIRONMENT }}" "${{ env.AWS_REGION }}" "desired-count")
+
+          compute_subnet_ids=$(aws ssm get-parameter \
+                                --name "${{ env.compute_subnet_ids }}" \
+                                --query "Parameter.Value" \
+                                --region ${{ env.AWS_REGION }} \
+                                --output text)
+
+
+          aws ecs update-service --cluster ${{ env.cluster_name }} --service ${{ env.service_name }} \
+            --task-definition ${{ env.APP_NAME}} --desired-count $desired_count \
+            --network-configuration "awsvpcConfiguration={subnets=[$compute_subnet_ids],securityGroups=[$sg_id]}" \
+            --load-balancers targetGroupArn=$target_group_arn,containerName=${{ env.APP_NAME }},containerPort=$container_port \
+            --region ${{ env.AWS_REGION }}
